@@ -2,17 +2,21 @@ package main
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// define a struct to represent the event doc in the database
+// Define a struct to represent the event doc in the database
 type Event struct {
-	ID string `bson:"_id"`
+	ID   string    `bson:"_id"`
+	Date time.Time `bson:"date"`
 }
 
 func main() {
@@ -42,21 +46,32 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func eventHandler(w http.ResponseWriter, r *http.Request) {
-	// Below we generate an arbitary EventID. I want to use hashgen going forward, but need to test the package with staging DBM to make sure it acts as intended
-	eventID := "abcd1234"
+	// Generate the event ID hash (playing with MD5, this should be SHA)
+	eventID := generateEventID()
 
-	// store the event ID in Mongo
-	err := storeEventID(eventID)
+	// Set the event date
+	eventDate := time.Now().AddDate(0, 1, 0) // Set the event date to one month from now
+
+	// Store the event in Mongo
+	err := storeEvent(eventID, eventDate)
 	if err != nil {
-		http.Error(w, "Failed to store event ID", http.StatusInternalServerError)
+		http.Error(w, "Failed to store event", http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Fprintf(w, "Event created! Event ID: %s", eventID)
+	fmt.Fprintf(w, "Event button clicked! Event ID: %s, Date: %s", eventID, eventDate.String())
 }
 
-func storeEventID(eventID string) error {
-	// Set up the Mongo listener
+func generateEventID() string {
+	// Here's we're using the timestamp to generate the hash
+	timestamp := time.Now().String()
+	hash := md5.Sum([]byte(timestamp))
+
+	return hex.EncodeToString(hash[:])
+}
+
+func storeEvent(eventID string, eventDate time.Time) error {
+	// Set up Mongo listener
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27017")
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -67,9 +82,10 @@ func storeEventID(eventID string) error {
 	// Access the events collection in the "test" database
 	collection := client.Database("test").Collection("events")
 
-	// Generate event doc and add to collection
+	// Create the event doc and add to the collection
 	event := Event{
-		ID: eventID,
+		ID:   eventID,
+		Date: eventDate,
 	}
 
 	_, err = collection.InsertOne(context.Background(), event)
@@ -88,4 +104,3 @@ func storeEventID(eventID string) error {
 // next hurdle will be connecting generations to the ID refs (eg. attach userID to eventID)
 // not sure if it makes more sense to focus on filling out the struct for all generations first
 // or to lock in the distributed hashing first so we don't have to refactor when ID storage changes
-
